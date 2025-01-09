@@ -111,6 +111,13 @@ int main_sort(int argc, char** argv) {
                                                    " identifier space.", {'O', "optimize"});
     args::Group threading_opts(parser, "[ Threading ]");
     args::ValueFlag<uint64_t> nthreads(threading_opts, "N", "Number of threads to use for parallel operations.", {'t', "threads"});
+    
+#ifdef USE_GPU
+    // GPU-enabled sort
+    args::Group gpu_opts(parser, "[ GPU ]");
+    args::Flag gpu_compute(gpu_opts, "gpu", "Enable computation with GPU.", {"gpu"});
+#endif
+
     args::Group processing_info_opts(parser, "[ Processing Information ]");
     args::Flag progress(processing_info_opts, "progress", "Write the current progress to stderr.", {'P', "progress"});
     args::Group program_info_opts(parser, "[ Program Information ]");
@@ -449,6 +456,37 @@ int main_sort(int argc, char** argv) {
 						path_index.clean();
 						path_index.from_handle_graph(graph, num_threads);
 					}
+#ifdef USE_GPU
+    if(gpu_compute){  // run on GPU
+                    order = algorithms::path_linear_sgd_order_gpu(graph,
+                                                                path_index,
+                                                                path_sgd_use_paths,
+                                                                path_sgd_iter_max,
+                                                                path_sgd_iter_max_learning_rate,
+                                                                path_sgd_min_term_updates,
+                                                                path_sgd_delta,
+                                                                path_sgd_eps,
+                                                                path_sgd_max_eta,
+                                                                path_sgd_zipf_theta,
+                                                                path_sgd_zipf_space,
+                                                                path_sgd_zipf_space_max,
+                                                                path_sgd_zipf_space_quantization_step,
+                                                                path_sgd_cooling,
+                                                                num_threads,
+                                                                progress,
+                                                                path_sgd_seed,
+                                                                snapshot,
+                                                                snapshot_prefix,
+                                                                p_sgd_layout,
+                                                                layout_out,
+                                                                _p_sgd_target_paths,
+                                                                is_ref);
+    }
+#endif
+
+#ifdef USE_GPU
+    if(!gpu_compute){  // run on CPU
+#endif
                     order = algorithms::path_linear_sgd_order(graph,
                                                               path_index,
                                                               path_sgd_use_paths,
@@ -472,6 +510,9 @@ int main_sort(int argc, char** argv) {
 															  layout_out,
 															  _p_sgd_target_paths,
 															  is_ref);
+#ifdef USE_GPU
+    }
+#endif
 					// reset is_ref or we will break when we apply it again
                     break;
                 }
@@ -516,30 +557,63 @@ int main_sort(int argc, char** argv) {
     } else if (args::get(no_seeds)) {
         graph.apply_ordering(algorithms::topological_order(&graph, false, false, args::get(progress)), true);
     } else if (args::get(p_sgd)) {
-        std::vector<handle_t> order =
-                algorithms::path_linear_sgd_order(graph,
-                                                  path_index,
-                                                  path_sgd_use_paths,
-                                                  path_sgd_iter_max,
-                                                  path_sgd_iter_max_learning_rate,
-                                                  path_sgd_min_term_updates,
-                                                  path_sgd_delta,
-                                                  path_sgd_eps,
-                                                  path_sgd_max_eta,
-                                                  path_sgd_zipf_theta,
-                                                  path_sgd_zipf_space,
-                                                  path_sgd_zipf_space_max,
-                                                  path_sgd_zipf_space_quantization_step,
-                                                  path_sgd_cooling,
-                                                  num_threads,
-                                                  progress,
-                                                  path_sgd_seed,
-                                                  snapshot,
-                                                  snapshot_prefix,
-												  p_sgd_layout,
-												  layout_out,
-												  _p_sgd_target_paths,
-												  is_ref);
+#ifdef USE_GPU
+    if (gpu_compute){  // run on GPU
+        std::vector<handle_t> order = algorithms::path_linear_sgd_order_gpu(graph,
+                                                                        path_index,
+                                                                        path_sgd_use_paths,
+                                                                        path_sgd_iter_max,
+                                                                        path_sgd_iter_max_learning_rate,
+                                                                        path_sgd_min_term_updates,
+                                                                        path_sgd_delta,
+                                                                        path_sgd_eps,
+                                                                        path_sgd_max_eta,
+                                                                        path_sgd_zipf_theta,
+                                                                        path_sgd_zipf_space,
+                                                                        path_sgd_zipf_space_max,
+                                                                        path_sgd_zipf_space_quantization_step,
+                                                                        path_sgd_cooling,
+                                                                        num_threads,
+                                                                        progress,
+                                                                        path_sgd_seed,
+                                                                        snapshot,
+                                                                        snapshot_prefix,
+                                                                        p_sgd_layout,
+                                                                        layout_out,
+                                                                        _p_sgd_target_paths,
+                                                                        is_ref);
+    }
+#endif
+
+#ifdef USE_GPU
+    if (!gpu_compute){  // run on CPU
+#endif
+        std::vector<handle_t> order = algorithms::path_linear_sgd_order(graph,
+                                                                        path_index,
+                                                                        path_sgd_use_paths,
+                                                                        path_sgd_iter_max,
+                                                                        path_sgd_iter_max_learning_rate,
+                                                                        path_sgd_min_term_updates,
+                                                                        path_sgd_delta,
+                                                                        path_sgd_eps,
+                                                                        path_sgd_max_eta,
+                                                                        path_sgd_zipf_theta,
+                                                                        path_sgd_zipf_space,
+                                                                        path_sgd_zipf_space_max,
+                                                                        path_sgd_zipf_space_quantization_step,
+                                                                        path_sgd_cooling,
+                                                                        num_threads,
+                                                                        progress,
+                                                                        path_sgd_seed,
+                                                                        snapshot,
+                                                                        snapshot_prefix,
+                                                                        p_sgd_layout,
+                                                                        layout_out,
+                                                                        _p_sgd_target_paths,
+                                                                        is_ref);
+#ifdef USE_GPU
+    }
+#endif
         graph.apply_ordering(order, true);
     } else if (args::get(breadth_first)) {
         graph.apply_ordering(algorithms::breadth_first_topological_order(graph, bf_chunk_size), true);
