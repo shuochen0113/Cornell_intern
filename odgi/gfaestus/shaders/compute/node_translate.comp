@@ -1,0 +1,24 @@
+#version 450
+
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout (set = 0, binding = 0) readonly buffer Selection {
+  int data[];
+} selection;
+
+layout (set = 0, binding = 1) buffer Nodes {
+  vec4 pos[];
+} nodes;
+
+layout (push_constant) uniform Delta {
+  vec2 d;
+} delta;
+
+void main() {
+    uint index = gl_GlobalInvocationID.x;
+
+    if (selection.data[index] != 0) {
+      vec4 node_delta = vec4(delta.d.x, delta.d.y, delta.d.x, delta.d.y);
+      nodes.pos[index] += node_delta;
+    }
+}

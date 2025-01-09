@@ -1,0 +1,49 @@
+#version 450
+
+#include "edge_orient.glsl"
+
+layout (local_size_x = 1024) in;
+
+layout (set = 0, binding = 0) readonly buffer Nodes {
+  vec2 pos[];
+} nodes;
+
+layout (set = 0, binding = 1) readonly buffer Edges {
+  uvec2 edge[];
+} edges;
+
+layout (set = 0, binding = 2) writeonly buffer EdgeCurves {
+  uint edge_count;
+  vec2 curve[];
+} curves;
+
+layout (push_constant) uniform PushConstants {
+  uint edge_count;
+  vec4 visible_area;
+  vec2 viewport_size;
+} pc;
+
+
+void main() {
+  if (gl_GlobalInvocationID.xyz == uvec3(0)) {
+    curves.edge_count = 0;
+  }
+
+  barrier();
+
+  uint edge_ix = gl_LocalInvocationIndex;
+
+  uvec2 this_edge = edges.edge[edge_ix];
+  uvec2 oriented_ixs = oriented_edge_ixs(this_edge);
+
+  vec2 p0 = nodes.pos[oriented_ixs.x];
+  vec2 p1 = nodes.pos[oriented_ixs.y];
+
+  // TODO compare points to viewport & filter;
+  // need to either calculate or pass the visible area
+
+  uint offset = atomicAdd(curves.edge_count, 1);
+
+  curves.curve[offset] = p0;
+  curves.curve[offset + 1] = p1;
+}
