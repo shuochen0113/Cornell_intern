@@ -637,6 +637,7 @@ add_library(odgi_objs OBJECT
 )
 if (USE_GPU)
   target_sources(odgi_objs PRIVATE "${CMAKE_SOURCE_DIR}/src/cuda/layout.cu")
+  target_sources(odgi_objs PRIVATE "${CMAKE_SOURCE_DIR}/src/cuda/sort.cu")
 endif (USE_GPU)
 
 set(odgi_DEPS
@@ -825,6 +826,7 @@ set(odgi_HEADERS
   ${CMAKE_SOURCE_DIR}/src/algorithms/diffpriv.cpp)
 if (USE_GPU)
   list(APPEND odgi_HEADERS "${CMAKE_SOURCE_DIR}/src/cuda/layout.h")
+  list(APPEND odgi_HEADERS "${CMAKE_SOURCE_DIR}/src/cuda/sort.h")
 endif (USE_GPU)
 
 target_include_directories(odgi_objs PUBLIC ${odgi_INCLUDES})
