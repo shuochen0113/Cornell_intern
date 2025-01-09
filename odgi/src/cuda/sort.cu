@@ -17,7 +17,7 @@ namespace cuda {
 
 // store curandState_t in a coalesced manner for each Streaming Multiprocesser block.
 __global__ 
-void cuda_device_init(curandState_t *rnd_state_tmp, curandStateCoalesced_t *rnd_state) {
+void cuda_device_init_sort(curandState_t *rnd_state_tmp, curandStateCoalesced_t *rnd_state) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     // Standard XORWOW initialization
     curand_init(42 + tid, tid, 0, &rnd_state_tmp[tid]);
@@ -389,7 +389,7 @@ void gpu_sort(sort_config_t config,
     curandStateCoalesced_t *rnd_state;
     CUDACHECK(cudaMallocManaged(&rnd_state_tmp, sm_count * BLOCK_SIZE * sizeof(curandState_t)));
     CUDACHECK(cudaMallocManaged(&rnd_state, sm_count * sizeof(curandStateCoalesced_t)));
-    cuda_device_init<<<sm_count, BLOCK_SIZE>>>(rnd_state_tmp, rnd_state);
+    cuda_device_init_sort<<<sm_count, BLOCK_SIZE>>>(rnd_state_tmp, rnd_state);
     CUDACHECK(cudaGetLastError());
     CUDACHECK(cudaDeviceSynchronize());
     cudaFree(rnd_state_tmp);

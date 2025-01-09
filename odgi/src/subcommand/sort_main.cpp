@@ -557,9 +557,10 @@ int main_sort(int argc, char** argv) {
     } else if (args::get(no_seeds)) {
         graph.apply_ordering(algorithms::topological_order(&graph, false, false, args::get(progress)), true);
     } else if (args::get(p_sgd)) {
+        std::vector<handle_t> order;
 #ifdef USE_GPU
     if (gpu_compute){  // run on GPU
-        std::vector<handle_t> order = algorithms::path_linear_sgd_order_gpu(graph,
+        order = algorithms::path_linear_sgd_order_gpu(graph,
                                                                         path_index,
                                                                         path_sgd_use_paths,
                                                                         path_sgd_iter_max,
@@ -588,7 +589,7 @@ int main_sort(int argc, char** argv) {
 #ifdef USE_GPU
     if (!gpu_compute){  // run on CPU
 #endif
-        std::vector<handle_t> order = algorithms::path_linear_sgd_order(graph,
+        order = algorithms::path_linear_sgd_order(graph,
                                                                         path_index,
                                                                         path_sgd_use_paths,
                                                                         path_sgd_iter_max,
