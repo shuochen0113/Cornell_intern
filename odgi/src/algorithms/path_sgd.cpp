@@ -191,7 +191,7 @@ namespace odgi {
                                     } else {
                                         eta.store(etas[iteration]); // update our learning rate
                                         Delta_max.store(delta); // set our delta max to the threshold
-                                        if (iteration > first_cooling_iteration) {
+                                        if (iteration >= first_cooling_iteration) {
                                             adj_theta.store(0.001);
                                             cooling.store(true);
                                         }
@@ -463,6 +463,71 @@ namespace odgi {
             }
             return X_final;
         }
+
+//-----------------------------------
+// GPU version (if compiled with -DUSE_GPU)
+//-----------------------------------
+#ifdef USE_GPU
+std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
+                                        const xp::XP &path_index,
+                                        const std::vector<path_handle_t> &path_sgd_use_paths,
+                                        const uint64_t &iter_max,
+                                        const uint64_t &iter_with_max_learning_rate,
+                                        const uint64_t &min_term_updates,
+                                        const double &delta,
+                                        const double &eps,
+                                        const double &eta_max,
+                                        const double &theta,
+                                        const uint64_t &space,
+                                        const uint64_t &space_max,
+                                        const uint64_t &space_quantization_step,
+                                        const double &cooling_start,
+                                        const uint64_t &nthreads,
+                                        const bool &progress,
+                                        const bool &snapshot,
+                                        std::vector<std::string> &snapshots,
+                                        const bool &target_sorting,
+                                        std::vector<bool> &target_nodes)
+{
+    // 1) Initialize a vector of atomic<double> for node positions
+    uint64_t num_nodes = graph.get_node_count();
+    std::vector<std::atomic<double>> X(num_nodes);
+
+    // Seed with a simple linear layout based on node lengths (like CPU version)
+    {
+        uint64_t len = 0;
+        graph.for_each_handle([&](const handle_t &h) {
+            X[number_bool_packing::unpack_number(h)].store(double(len));
+            len += graph.get_length(h);
+        });
+    }
+
+    // 2) Fill in GPU config
+    cuda::sort_config_t config;
+    config.iter_max                 = iter_max;
+    config.min_term_updates         = min_term_updates;
+    config.eta_max                  = eta_max;
+    config.eps                      = eps;
+    config.iter_with_max_learning_rate = (int32_t)iter_with_max_learning_rate;
+    config.first_cooling_iteration  = (uint32_t)std::floor(cooling_start * double(iter_max));
+    config.theta                    = theta;
+    config.space                    = (uint32_t)space;
+    config.space_max                = (uint32_t)space_max;
+    config.space_quantization_step  = (uint32_t)space_quantization_step;
+    config.nthreads                 = nthreads;
+
+    // 3) Launch the GPU kernel
+    cuda::gpu_sort(config, graph, X);
+
+    // 4) Collect final positions
+    std::vector<double> X_final(num_nodes, 0.0);
+    for (uint64_t i = 0; i < num_nodes; i++) {
+        X_final[i] = X[i].load();
+    }
+    return X_final;
+}
+#endif // USE_GPU
+
 
         std::vector<double> path_linear_sgd_schedule(const double &w_min,
                                                      const double &w_max,
