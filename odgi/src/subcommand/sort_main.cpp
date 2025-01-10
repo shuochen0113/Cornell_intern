@@ -458,6 +458,8 @@ int main_sort(int argc, char** argv) {
 					}
 #ifdef USE_GPU
     if(gpu_compute){  // run on GPU
+                    // Try to control eta_max
+                    // if(path_sgd_max_eta > 1e4) path_sgd_max_eta = 1e4;
                     order = algorithms::path_linear_sgd_order_gpu(graph,
                                                                 path_index,
                                                                 path_sgd_use_paths,
@@ -560,6 +562,8 @@ int main_sort(int argc, char** argv) {
         std::vector<handle_t> order;
 #ifdef USE_GPU
     if (gpu_compute){  // run on GPU
+        // Try to control eta_max
+        // if(path_sgd_max_eta > 1e4) path_sgd_max_eta = 1e4;
         order = algorithms::path_linear_sgd_order_gpu(graph,
                                                                         path_index,
                                                                         path_sgd_use_paths,

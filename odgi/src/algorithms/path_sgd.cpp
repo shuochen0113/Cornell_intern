@@ -2,10 +2,12 @@
 #include "dirty_zipfian_int_distribution.h"
 #include "layout.hpp"
 
-//#define debug_path_sgd
+// #define debug_path_sgd
 // #define eval_path_sgd
 // #define debug_schedule
 // # define debug_sample_from_nodes
+#define debug_CUDA
+
 namespace odgi {
     namespace algorithms {
 
@@ -34,6 +36,20 @@ namespace odgi {
             std::cerr << "min_term_updates: " << min_term_updates << std::endl;
             std::cerr << "delta: " << delta << std::endl;
             std::cerr << "eps: " << eps << std::endl;
+            std::cerr << "eta_max: "<< eta_max << std::endl;
+            std::cerr << "theta: " << theta << std::endl;
+            std::cerr << "space: " << space << std::endl;
+            std::cerr << "space_max: " << space_max << std::endl;
+            std::cerr << "space_quantization_step: " << space_quantization_step << std::endl;
+            std::cerr << "cooling_start: " << cooling_start << std::endl;
+#endif
+
+#ifdef debug_CUDA
+            std::cerr << "iter_max: " << iter_max << std::endl;
+            std::cerr << "min_term_updates: " << min_term_updates << std::endl;
+            std::cerr << "delta: " << delta << std::endl;
+            std::cerr << "eps: " << eps << std::endl;
+            std::cerr << "eta_max: "<< eta_max << std::endl;
             std::cerr << "theta: " << theta << std::endl;
             std::cerr << "space: " << space << std::endl;
             std::cerr << "space_max: " << space_max << std::endl;
@@ -67,6 +83,15 @@ namespace odgi {
                         X[number_bool_packing::unpack_number(handle)].store(len);
                         len += graph.get_length(handle);
                     });
+
+#ifdef debug_CUDA
+            std::cerr << "[debug_CUDA][CPU::path_linear_sgd] Seeded X with graph order. Some sample:\n";
+            // Print first 5 seed positions
+            for (size_t i = 0; i < std::min(size_t(5), X.size()); i++) {
+                std::cerr << "  X[" << i << "]=" << X[i].load() << "\n";
+            }
+#endif
+
             // the longest path length measured in nucleotides
             //size_t longest_path_in_nucleotides = 0;
             // the total path length in nucleotides
@@ -197,6 +222,12 @@ namespace odgi {
                                         }
                                     }
                                     term_updates.store(0);
+#ifdef debug_CUDA
+std::cerr << "[CPU] iteration=" << iteration
+          << ", total updates so far="
+          << iteration * min_term_updates
+          << "\n";
+#endif
                                 }
                                 std::this_thread::sleep_for(1ms);
                             }
@@ -351,6 +382,15 @@ namespace odgi {
 #endif
                                     // distance == magnitude in our 1D situation
                                     double dx = X[i].load() - X[j].load();
+#ifdef debug_CUDA
+                    // Print partial info from the CPU
+                    // Only occasionally to avoid spam
+                    if (i % 1000 == 0 && j >= 2000) {
+                        std::cerr << "[debug_CUDA][CPU worker=" << tid
+                                  << "] i=" << i << " j=" << j 
+                                  << " dx=" << dx << "\n";
+                    }
+#endif
                                     if (dx == 0) {
                                         dx = 1e-9; // avoid nan
                                     }
@@ -461,6 +501,15 @@ namespace odgi {
             for (auto &x : X) {
                 X_final[i++] = x.load();
             }
+
+#ifdef debug_CUDA
+            // Print a small sample of the final CPU positions
+            std::cerr << "[debug_CUDA][CPU::path_linear_sgd] Final X sample:\n";
+            for (size_t i = 0; i < std::min(size_t(10), X_final.size()); i++) {
+                std::cerr << "  X_final[" << i << "]=" << X_final[i] << "\n";
+            }
+#endif
+            
             return X_final;
         }
 
@@ -489,6 +538,16 @@ std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
                                         const bool &target_sorting,
                                         std::vector<bool> &target_nodes)
 {
+#ifdef debug_CUDA
+    std::cerr << "[debug_CUDA] iter_max=" << iter_max
+              << " min_term_updates=" << min_term_updates
+              << " delta=" << delta << " eps=" << eps << " eta_max=" << eta_max
+              << " theta=" << theta << " space=" << space
+              << " space_max=" << space_max
+              << " space_quantization_step=" << space_quantization_step
+              << " cooling_start=" << cooling_start << std::endl;
+#endif
+
     // 1) Initialize a vector of atomic<double> for node positions
     uint64_t num_nodes = graph.get_node_count();
     std::vector<std::atomic<double>> X(num_nodes);
@@ -501,6 +560,9 @@ std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
             len += graph.get_length(h);
         });
     }
+#ifdef debug_CUDA
+    std::cerr << "[debug_CUDA] Allocated X with size=" << num_nodes << ".\n";
+#endif
 
     // 2) Fill in GPU config
     cuda::sort_config_t config;
@@ -515,15 +577,33 @@ std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
     config.space_max                = (uint32_t)space_max;
     config.space_quantization_step  = (uint32_t)space_quantization_step;
     config.nthreads                 = nthreads;
+#ifdef debug_CUDA
+    std::cerr << "[debug_CUDA] calling cuda::gpu_sort.\n";
+#endif
 
     // 3) Launch the GPU kernel
     cuda::gpu_sort(config, graph, X);
+#ifdef debug_CUDA
+    std::cerr << "[debug_CUDA] returned from cuda::gpu_sort.\n";
+#endif
 
     // 4) Collect final positions
     std::vector<double> X_final(num_nodes, 0.0);
     for (uint64_t i = 0; i < num_nodes; i++) {
         X_final[i] = X[i].load();
     }
+#ifdef debug_CUDA
+    std::cerr << "[debug_CUDA] done. returning final X.\n";
+    // Print only up to the first 50 positions, to avoid too much log spam
+    uint64_t limit = std::min((uint64_t)10, (uint64_t)X_final.size());
+    std::cerr << "[debug_CUDA] X_final sample:\n";
+    for (uint64_t i = 0; i < limit; i++) {
+        std::cerr << "  X_final[" << i << "]=" << X_final[i] << "\n";
+    }
+    std::cerr << "[debug_CUDA] (Printed " << limit << " of " 
+            << X_final.size() << " total)\n";
+#endif
+
     return X_final;
 }
 #endif // USE_GPU
