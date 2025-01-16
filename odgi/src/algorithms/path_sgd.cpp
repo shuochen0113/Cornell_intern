@@ -6,7 +6,7 @@
 // #define eval_path_sgd
 // #define debug_schedule
 // # define debug_sample_from_nodes
-#define debug_CUDA
+// #define debug_CUDA
 
 namespace odgi {
     namespace algorithms {
