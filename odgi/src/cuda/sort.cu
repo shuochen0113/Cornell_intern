@@ -72,8 +72,8 @@ uint32_t cuda_rnd_zipf(cuda::curandStateCoalesced_t *rnd_state,
     // same approximate logic as your 2D code
     double alpha = 1.0 / (1.0 - theta);
     double denom = 1.0 - (zeta2 / zetan);
-    if (fabs(denom) < 1e-15) {
-        denom = 1e-15;
+    if (fabs(denom) < 1e-9) {
+        denom = 1e-9;
     }
     double eta = (1.0 - pow(2.0 / (double)n, (double)(1.0 - theta))) / denom;
     double u = 1.0 - curand_uniform_coalesced(rnd_state, t_idx); 
@@ -264,7 +264,7 @@ void gpu_sort(sort_config_t config,
     const double eps = config.eps;
     const double eta_max = config.eta_max;
     const double eta_min = eps / w_max;
-    double lambda  = log(eta_max / eta_min) / (double(iter_max) - 1.0);
+    const double lambda  = log(eta_max / eta_min) / (double(iter_max) - 1.0);
 
     for (uint64_t i = 0; i < config.iter_max; i++) {
         double val = eta_max * exp(-lambda * (fabs(double(i) - double(iter_with_max_learning_rate))));
