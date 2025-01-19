@@ -541,18 +541,21 @@ std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
 #ifdef debug_CUDA
     std::cerr << "[debug_CUDA] iter_max=" << iter_max
               << " min_term_updates=" << min_term_updates
-              << " delta=" << delta << " eps=" << eps << " eta_max=" << eta_max
+              << " delta=" << delta << " eps=" << eps 
+              << " eta_max=" << eta_max
               << " theta=" << theta << " space=" << space
               << " space_max=" << space_max
               << " space_quantization_step=" << space_quantization_step
-              << " cooling_start=" << cooling_start << std::endl;
+              << " cooling_start=" << cooling_start
+              << " target_sorting=" << target_sorting 
+              << std::endl;
 #endif
 
     // 1) Initialize a vector of atomic<double> for node positions
     uint64_t num_nodes = graph.get_node_count();
     std::vector<std::atomic<double>> X(num_nodes);
 
-    // Seed with a simple linear layout based on node lengths (like CPU version)
+    // Seed with a simple linear layout (similar to the CPU approach)
     {
         uint64_t len = 0;
         graph.for_each_handle([&](const handle_t &h) {
@@ -577,12 +580,20 @@ std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
     config.space_max                = (uint32_t)space_max;
     config.space_quantization_step  = (uint32_t)space_quantization_step;
     config.nthreads                 = nthreads;
+
 #ifdef debug_CUDA
-    std::cerr << "[debug_CUDA] calling cuda::gpu_sort.\n";
+    std::cerr << "[debug_CUDA] calling cuda::gpu_sort with target_sorting=" 
+              << target_sorting << ".\n";
 #endif
 
-    // 3) Launch the GPU kernel
-    cuda::gpu_sort(config, graph, X);
+    // 3) Launch the GPU kernel (now with target-sorting info)
+    //    We'll pass both 'target_sorting' and the 'target_nodes' vector to match CPU logic.
+    cuda::gpu_sort(config, 
+                   graph, 
+                   X,
+                   target_sorting,
+                   target_nodes);
+
 #ifdef debug_CUDA
     std::cerr << "[debug_CUDA] returned from cuda::gpu_sort.\n";
 #endif
@@ -592,16 +603,17 @@ std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
     for (uint64_t i = 0; i < num_nodes; i++) {
         X_final[i] = X[i].load();
     }
+
 #ifdef debug_CUDA
     std::cerr << "[debug_CUDA] done. returning final X.\n";
-    // Print only up to the first 50 positions, to avoid too much log spam
+    // Print a small sample
     uint64_t limit = std::min((uint64_t)10, (uint64_t)X_final.size());
     std::cerr << "[debug_CUDA] X_final sample:\n";
     for (uint64_t i = 0; i < limit; i++) {
         std::cerr << "  X_final[" << i << "]=" << X_final[i] << "\n";
     }
     std::cerr << "[debug_CUDA] (Printed " << limit << " of " 
-            << X_final.size() << " total)\n";
+              << X_final.size() << " total)\n";
 #endif
 
     return X_final;
@@ -852,30 +864,33 @@ std::vector<double> path_linear_sgd_gpu(const graph_t &graph,
                                                     const std::string &snapshot_prefix,
                                                     const bool &write_layout,
                                                     const std::string &layout_out,
-													const bool &target_sorting,
-													std::vector<bool>& target_nodes) {
-            std::vector<string> snapshots;
+                                                    const bool &target_sorting,
+                                                    std::vector<bool>& target_nodes) {
+            std::vector<std::string> snapshots;
             std::cerr << "[odgi::path_linear_sgd_order] Using GPU-based path_linear_sgd.\n";
+
+            // call the GPU-based sgd
             std::vector<double> layout = path_linear_sgd_gpu(graph,
-                                                         path_index,
-                                                         path_sgd_use_paths,
-                                                         iter_max,
-                                                         iter_with_max_learning_rate,
-                                                         min_term_updates,
-                                                         delta,
-                                                         eps,
-                                                         eta_max,
-                                                         theta,
-                                                         space,
-                                                         space_max,
-                                                         space_quantization_step,
-                                                         cooling_start,
-                                                         nthreads,
-                                                         progress,
-                                                         snapshot,
-                                                         snapshots,
-														 target_sorting,
-														 target_nodes);
+                                                             path_index,
+                                                             path_sgd_use_paths,
+                                                             iter_max,
+                                                             iter_with_max_learning_rate,
+                                                             min_term_updates,
+                                                             delta,
+                                                             eps,
+                                                             eta_max,
+                                                             theta,
+                                                             space,
+                                                             space_max,
+                                                             space_quantization_step,
+                                                             cooling_start,
+                                                             nthreads,
+                                                             progress,
+                                                             snapshot,
+                                                             snapshots,
+                                                             target_sorting,
+                                                             target_nodes);
+
             // TODO move the following into its own function that we can reuse
 #ifdef debug_components
             std::cerr << "node count: " << graph.get_node_count() << std::endl;

@@ -15,6 +15,8 @@
     exit(EXIT_FAILURE);                                         \
   }                                                             \
 } while(0)
+
+// If you don't need NCCL, feel free to remove this
 #define NCCLCHECK(cmd) do {                         \
   ncclResult_t res = cmd;                           \
   if (res != ncclSuccess) {                         \
@@ -25,6 +27,9 @@
 } while(0)
 
 
+/**
+ * \brief A device function to initialize the coalesced curand states.
+ */
 __global__ 
 void cuda_device_init(curandState_t *rnd_state_tmp, cuda::curandStateCoalesced_t *rnd_state) {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
@@ -62,6 +67,9 @@ float curand_uniform_coalesced(cuda::curandStateCoalesced_t *state, uint32_t t_i
 }
 
 
+/**
+ * \brief Zipf sampling, same approximate logic as your 2D path_sgd code.
+ */
 __device__
 uint32_t cuda_rnd_zipf(cuda::curandStateCoalesced_t *rnd_state,
                        uint32_t t_idx,
@@ -69,13 +77,12 @@ uint32_t cuda_rnd_zipf(cuda::curandStateCoalesced_t *rnd_state,
                        double theta,
                        double zeta2,
                        double zetan) {
-    // same approximate logic as your 2D code
     double alpha = 1.0 / (1.0 - theta);
     double denom = 1.0 - (zeta2 / zetan);
     if (fabs(denom) < 1e-9) {
         denom = 1e-9;
     }
-    double eta = (1.0 - pow(2.0 / (double)n, (double)(1.0 - theta))) / denom;
+    double eta = (1.0 - pow(2.0 / (double)n, (1.0 - theta))) / denom;
     double u = 1.0 - curand_uniform_coalesced(rnd_state, t_idx); 
     double uz = u * zetan;
 
@@ -85,22 +92,45 @@ uint32_t cuda_rnd_zipf(cuda::curandStateCoalesced_t *rnd_state,
     } else if (uz < (1.0 + pow(0.5, theta))) {
         val = 2;
     } else {
-        val = 1 + (int64_t)((double)n * pow((eta * u - eta + 1.0), (1.0/(1.0-theta))));
+        val = 1 + (int64_t)((double)n * pow((eta * u - eta + 1.0), 1.0 / (1.0 - theta)));
     }
     if (val > (int64_t)n) {
         val = n; // clamp
     }
     assert(val >= 0);
-    assert(val <= n);
+    assert(val <= (int64_t)n);
     return (uint32_t)val;
 }
 
-// The 1D update
+/**
+ * \brief Update two node positions in 1D, if they are not "locked" by target-sorting.
+ * 
+ * If both are locked, we skip. If one is locked, we only move the other side.
+ */
 __device__
 void update_pos_gpu_1D(int64_t n1_pos_in_path, uint32_t n1_id,
                        int64_t n2_pos_in_path, uint32_t n2_id,
                        double eta,
-                       cuda::node_data_t &node_data) {
+                       cuda::node_data_t &node_data,
+                       bool use_target_sorting,
+                       const bool* device_target_nodes) 
+{
+    // If target-sorting is on, check if each node is locked
+    bool update_n1 = true;
+    bool update_n2 = true;
+    if (use_target_sorting && device_target_nodes) {
+        if (device_target_nodes[n1_id]) {
+            update_n1 = false;
+        }
+        if (device_target_nodes[n2_id]) {
+            update_n2 = false;
+        }
+        // If both locked => skip entirely
+        if (!update_n1 && !update_n2) {
+            return;
+        }
+    }
+
     double term_dist = fabs((double)n1_pos_in_path - (double)n2_pos_in_path);
     if (term_dist < 1e-9) {
         term_dist = 1e-9;
@@ -127,8 +157,15 @@ void update_pos_gpu_1D(int64_t n1_pos_in_path, uint32_t n1_id,
     double r = delta / mag;
     double r_x = r * dx;
 
-    atomicExch(x1, (float)(x1_val - r_x));
-    atomicExch(x2, (float)(x2_val + r_x));
+    // Move whichever node(s) are not locked
+    if (update_n1) {
+        float new_x1 = (float)(x1_val - r_x);
+        atomicExch(x1, new_x1);
+    }
+    if (update_n2) {
+        float new_x2 = (float)(x2_val + r_x);
+        atomicExch(x2, new_x2);
+    }
 }
 
 // The CUDA kernel for doing 1D path SGD
@@ -141,30 +178,38 @@ void gpu_sort_kernel(int iter,
                      cuda::node_data_t node_data,
                      cuda::path_data_t path_data,
                      bool in_cooling_phase,
-                     int sm_count) 
+                     int sm_count,
+                     bool use_target_sorting,
+                     const bool* device_target_nodes)
 {
     // global thread index
     uint64_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // read SM ID
     uint32_t smid;
     asm volatile("mov.u32 %0, %%smid;" : "=r"(smid));
-    assert(smid < sm_count);
+    assert(smid < (uint32_t)sm_count);
 
     // only proceed if tid < min_term_updates
     if (tid >= config.min_term_updates) {
         return;
     }
-    // pick a random generator based on block ID (as we do in layout.cu)
-    // This is approximate: if we have more blocks than SMs, we might replicate some.
+
+    // pick a random generator based on SM ID
     cuda::curandStateCoalesced_t *rng_block = &rnd_state[smid];
 
     // pick a random step
     uint32_t random_val = curand_coalesced(rng_block, threadIdx.x);
+    if (path_data.total_path_steps == 0) {
+        return; 
+    }
     uint64_t step_idx = random_val % path_data.total_path_steps;
 
     // fetch stepA
     cuda::path_element_t stepA = path_data.element_array[step_idx];
     uint32_t path_idx = stepA.pidx;
     cuda::path_t p = path_data.paths[path_idx];
+
     // skip if degenerate path
     if (p.step_count < 2) {
         return;
@@ -174,15 +219,13 @@ void gpu_sort_kernel(int iter,
     uint32_t s1_idx = step_idx - p.first_step_in_path; // index within path
     uint32_t s2_idx = 0;
 
-    // do we use "cooling" or random approach
-    // similar to CPU code: "if (cooling.load() || flip(gen)) ..."
-    // We'll do a quick coin flip:
+    // do we use "cooling" or random approach? 
     bool coin = ((curand_coalesced(rng_block, threadIdx.x) & 1U) == 0);
 
     if (in_cooling_phase || coin) {
         // zipf-based approach
         bool go_backward = false;
-        uint32_t flip_val = curand_coalesced(rng_block, threadIdx.x) & 1U; // 0 or 1
+        uint32_t flip_val = (curand_coalesced(rng_block, threadIdx.x) & 1U); // 0 or 1
 
         if ((s1_idx > 0 && flip_val == 0) || (s1_idx == p.step_count - 1)) {
             go_backward = true;
@@ -192,7 +235,7 @@ void gpu_sort_kernel(int iter,
             jump_space = config.space; 
         }
         if (jump_space == 0) {
-            // no move possible if s1_idx=0 & backward or s1_idx=last & forward
+            // no move possible
             return;
         }
 
@@ -221,22 +264,31 @@ void gpu_sort_kernel(int iter,
     }
     assert(s1_idx < p.step_count);
     assert(s2_idx < p.step_count);
-    assert(s1_idx != s2_idx);
+
+    if (s1_idx == s2_idx) {
+        // should never happen, but let's guard
+        return;
+    }
 
     // fetch stepB
     cuda::path_element_t stepB = p.elements[s2_idx];
 
     // get node IDs & positions
     uint32_t n1_id = stepA.node_id;
-    int64_t n1_pos = stepA.pos; // negative => reversed
+    int64_t n1_pos = stepA.pos;
     if (n1_pos < 0) n1_pos = -n1_pos;
 
     uint32_t n2_id = stepB.node_id;
     int64_t n2_pos = stepB.pos;
     if (n2_pos < 0) n2_pos = -n2_pos;
 
-    // update 1D
-    update_pos_gpu_1D(n1_pos, n1_id, n2_pos, n2_id, eta, node_data);
+    // update 1D (with possible target-sorting skip)
+    update_pos_gpu_1D(n1_pos, n1_id,
+                      n2_pos, n2_id,
+                      eta,
+                      node_data,
+                      use_target_sorting,
+                      device_target_nodes);
 }
 
 
@@ -245,7 +297,9 @@ namespace cuda {
 
 void gpu_sort(sort_config_t config,
               const odgi::graph_t &graph,
-              std::vector<std::atomic<double>> &X) 
+              std::vector<std::atomic<double>> &X,
+              bool target_sorting,
+              const std::vector<bool> &target_nodes)
 {
     std::cout << "[gpu_sort] Using GPU to compute 1D path-SGD..." << std::endl;
 
@@ -282,12 +336,12 @@ void gpu_sort(sort_config_t config,
     node_data.node_count = node_count;
     CUDACHECK(cudaMallocManaged(&node_data.nodes, node_count * sizeof(node_t)));
 
-    // For simplicity, set seq_length=0 or the real length if you prefer
+    // Fill node_data from X
     uint64_t i_node = 0;
     graph.for_each_handle([&](const handlegraph::handle_t &h) {
         uint64_t idx = odgi::number_bool_packing::unpack_number(h);
         node_data.nodes[idx].x = float(X[idx].load());
-        node_data.nodes[idx].seq_length = (int32_t)graph.get_length(h);
+        node_data.nodes[idx].seq_length = (int32_t)graph.get_length(h); 
         i_node++;
     });
 
@@ -298,7 +352,7 @@ void gpu_sort(sort_config_t config,
     path_data.total_path_steps = 0;
     CUDACHECK(cudaMallocManaged(&path_data.paths, path_count * sizeof(path_t)));
 
-    // gather path handles in a vector
+    // gather path handles
     std::vector<odgi::path_handle_t> path_handles;
     path_handles.reserve(path_count);
     graph.for_each_path_handle([&](const odgi::path_handle_t &p) {
@@ -306,15 +360,16 @@ void gpu_sort(sort_config_t config,
         path_data.total_path_steps += graph.get_step_count(p);
     });
 
-    CUDACHECK(cudaMallocManaged(&path_data.element_array, path_data.total_path_steps * sizeof(path_element_t)));
+    CUDACHECK(cudaMallocManaged(&path_data.element_array, 
+                                path_data.total_path_steps * sizeof(path_element_t)));
 
     // fill in step_count + first_step_in_path
     uint64_t first_step_counter = 0;
     for (uint32_t p_i = 0; p_i < path_count; p_i++) {
         odgi::path_handle_t p = path_handles[p_i];
         uint64_t sc = graph.get_step_count(p);
-        path_data.paths[p_i].step_count          = sc;
-        path_data.paths[p_i].first_step_in_path  = first_step_counter;
+        path_data.paths[p_i].step_count = sc;
+        path_data.paths[p_i].first_step_in_path = first_step_counter;
         first_step_counter += sc;
     }
 
@@ -338,9 +393,9 @@ void gpu_sort(sort_config_t config,
                 uint64_t node_id = graph.get_id(h) - 1;
                 bool is_rev = graph.get_is_reverse(h);
 
-                base[s_i].pidx = p_i;
+                base[s_i].pidx    = p_i;
                 base[s_i].node_id = node_id;
-                base[s_i].pos = is_rev ? -pos : pos;
+                base[s_i].pos     = is_rev ? -pos : pos;
 
                 pos += graph.get_length(h);
 
@@ -354,8 +409,9 @@ void gpu_sort(sort_config_t config,
     // 5) Precompute zetas for zipf
     auto start_zeta = std::chrono::high_resolution_clock::now();
     uint64_t zetas_cnt = (config.space <= config.space_max)
-                         ? config.space + 1
-                         : (config.space_max + (config.space - config.space_max) / config.space_quantization_step + 1 + 1);
+                         ? (config.space + 1)
+                         : (config.space_max + 
+                            (config.space - config.space_max) / config.space_quantization_step + 1 + 1);
     double *zetas = nullptr;
     CUDACHECK(cudaMallocManaged(&zetas, zetas_cnt * sizeof(double)));
 
@@ -370,14 +426,13 @@ void gpu_sort(sort_config_t config,
         }
     }
     auto end_zeta = std::chrono::high_resolution_clock::now();
-    uint32_t duration_zeta_ms = std::chrono::duration_cast<std::chrono::milliseconds>(end_zeta - start_zeta).count();
-
+    uint32_t duration_zeta_ms = 
+        std::chrono::duration_cast<std::chrono::milliseconds>(end_zeta - start_zeta).count();
 
     // 6) Allocate RNG states
-    //    We'll assign one block per SM or possibly more blocks than SMs.
     curandState_t *rnd_tmp = nullptr;
     curandStateCoalesced_t *rnd_state = nullptr;
-    CUDACHECK(cudaMallocManaged(&rnd_tmp, sm_count * BLOCK_SIZE * sizeof(curandState_t)));
+    CUDACHECK(cudaMallocManaged(&rnd_tmp,   sm_count * BLOCK_SIZE * sizeof(curandState_t)));
     CUDACHECK(cudaMallocManaged(&rnd_state, sm_count * sizeof(curandStateCoalesced_t)));
 
     cuda_device_init<<<sm_count, BLOCK_SIZE>>>(rnd_tmp, rnd_state);
@@ -385,39 +440,56 @@ void gpu_sort(sort_config_t config,
     CUDACHECK(cudaDeviceSynchronize());
     CUDACHECK(cudaFree(rnd_tmp));
 
-    // 7) Main loop: launch kernel for each iteration
-    //    We do config.min_term_updates random picks each iteration
+    // 7) If we are doing target sorting, copy that array to device
+    bool *device_target_nodes = nullptr;
+    if (target_sorting && !target_nodes.empty()) {
+        CUDACHECK(cudaMallocManaged(&device_target_nodes, node_count * sizeof(bool)));
+        for (uint32_t i = 0; i < node_count; i++) {
+            device_target_nodes[i] = target_nodes[i];
+        }
+        // device_target_nodes is now a bool array on GPU
+    }
+
+    // 8) Main loop: launch kernel for each iteration
     uint64_t block_nbr = (config.min_term_updates + BLOCK_SIZE - 1ULL) / BLOCK_SIZE;
 
     for (uint64_t iter = 0; iter < config.iter_max; iter++) {
         double cur_eta = etas[iter];
         bool in_cooling_phase = (iter >= config.first_cooling_iteration);
 
-        gpu_sort_kernel<<<block_nbr, BLOCK_SIZE>>>( (int)iter,
-                                                    config,
-                                                    rnd_state,
-                                                    cur_eta,
-                                                    zetas,
-                                                    node_data,
-                                                    path_data,
-                                                    in_cooling_phase,
-                                                    sm_count);
+        gpu_sort_kernel<<<block_nbr, BLOCK_SIZE>>>(
+            (int)iter,
+            config,
+            rnd_state,
+            cur_eta,
+            zetas,
+            node_data,
+            path_data,
+            in_cooling_phase,
+            sm_count,
+            target_sorting,
+            device_target_nodes
+        );
         CUDACHECK(cudaGetLastError());
         CUDACHECK(cudaDeviceSynchronize());
     }
 
-    // 8) Copy final positions back to X
+    // 9) Copy final positions back to X
     for (uint64_t idx = 0; idx < node_count; idx++) {
         X[idx].store(double(node_data.nodes[idx].x));
     }
 
-    // 9) Clean up
+    // 10) Clean up
     cudaFree(etas);
     cudaFree(node_data.nodes);
     cudaFree(path_data.paths);
     cudaFree(path_data.element_array);
     cudaFree(zetas);
     cudaFree(rnd_state);
+
+    if (device_target_nodes != nullptr) {
+        cudaFree(device_target_nodes);
+    }
 
     std::cout << "[gpu_sort] Finished GPU-based 1D path-SGD.\n";
 }
