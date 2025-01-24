@@ -6,7 +6,11 @@
 #include <assert.h>
 #include "cuda_runtime_api.h"
 
-// Simple CUDA error-check macro
+// #define debug_CUDA
+#ifdef debug_CUDA
+#include <cstdio>
+#endif
+
 #define CUDACHECK(cmd) do {                                     \
   cudaError_t err = cmd;                                        \
   if (err != cudaSuccess) {                                     \
@@ -16,7 +20,6 @@
   }                                                             \
 } while(0)
 
-// If you don't need NCCL, feel free to remove this
 #define NCCLCHECK(cmd) do {                         \
   ncclResult_t res = cmd;                           \
   if (res != ncclSuccess) {                         \
@@ -36,7 +39,7 @@ void cuda_device_init(curandState_t *rnd_state_tmp, cuda::curandStateCoalesced_t
     // Initialize older (non-coalesced) CURAND state
     curand_init(42ULL + tid, tid, 0, &rnd_state_tmp[tid]);
     // Convert to coalesced form
-    rnd_state[blockIdx.x].d[threadIdx.x]  = rnd_state_tmp[tid].d;
+    rnd_state[blockIdx.x].d[threadIdx.x] = rnd_state_tmp[tid].d;
     rnd_state[blockIdx.x].w0[threadIdx.x] = rnd_state_tmp[tid].v[0];
     rnd_state[blockIdx.x].w1[threadIdx.x] = rnd_state_tmp[tid].v[1];
     rnd_state[blockIdx.x].w2[threadIdx.x] = rnd_state_tmp[tid].v[2];
@@ -104,7 +107,6 @@ uint32_t cuda_rnd_zipf(cuda::curandStateCoalesced_t *rnd_state,
 
 /**
  * \brief Update two node positions in 1D, if they are not "locked" by target-sorting.
- * 
  * If both are locked, we skip. If one is locked, we only move the other side.
  */
 __device__
@@ -194,6 +196,14 @@ void gpu_sort_kernel(int iter,
     if (tid >= config.min_term_updates) {
         return;
     }
+
+#ifdef debug_CUDA
+    // Print info for the first few threads
+    if (tid < 8 && iter < 2) {
+        printf("[debug_CUDA kernel] iter=%d, tid=%llu, smid=%u in_cooling=%d\n",
+               iter, (unsigned long long)tid, smid, (int)in_cooling_phase);
+    }
+#endif
 
     // pick a random generator based on SM ID
     cuda::curandStateCoalesced_t *rng_block = &rnd_state[smid];
@@ -307,6 +317,13 @@ void gpu_sort(sort_config_t config,
     cudaDeviceProp prop;
     CUDACHECK(cudaGetDeviceProperties(&prop, 0));
     int sm_count = prop.multiProcessorCount;
+
+#ifdef debug_CUDA
+    std::cerr << "[debug_CUDA][gpu_sort] sm_count=" << sm_count
+              << ", iter_max=" << config.iter_max
+              << ", min_term_updates=" << config.min_term_updates 
+              << ", target_sorting=" << target_sorting << std::endl;
+#endif
 
     // 2) Precompute the learning rates (eta) for each iteration
     double *etas = nullptr;
@@ -448,6 +465,9 @@ void gpu_sort(sort_config_t config,
             device_target_nodes[i] = target_nodes[i];
         }
         // device_target_nodes is now a bool array on GPU
+#ifdef debug_CUDA
+        std::cerr << "[debug_CUDA][gpu_sort] Copied target_nodes to device.\n";
+#endif
     }
 
     // 8) Main loop: launch kernel for each iteration
@@ -456,6 +476,16 @@ void gpu_sort(sort_config_t config,
     for (uint64_t iter = 0; iter < config.iter_max; iter++) {
         double cur_eta = etas[iter];
         bool in_cooling_phase = (iter >= config.first_cooling_iteration);
+
+#ifdef debug_CUDA
+        // Print every 10 iterations or the first few
+        if (iter < 5 || iter % 10 == 0) {
+            std::cerr << "[debug_CUDA][gpu_sort] iteration=" << iter
+                      << ", eta=" << cur_eta
+                      << ", in_cooling=" << in_cooling_phase
+                      << std::endl;
+        }
+#endif
 
         gpu_sort_kernel<<<block_nbr, BLOCK_SIZE>>>(
             (int)iter,
@@ -478,6 +508,10 @@ void gpu_sort(sort_config_t config,
     for (uint64_t idx = 0; idx < node_count; idx++) {
         X[idx].store(double(node_data.nodes[idx].x));
     }
+
+#ifdef debug_CUDA
+    std::cerr << "[debug_CUDA][gpu_sort] Done with all iterations; copying positions back.\n";
+#endif
 
     // 10) Clean up
     cudaFree(etas);
