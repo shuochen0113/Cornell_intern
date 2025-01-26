@@ -17,35 +17,16 @@ This part summarizes the results of running `odgi sort` with the new 1D path-gui
 
 ## Results Table
 
-| **Dataset**       | **CPU Time** | **GPU Time** | **odgi stat (CPU)**                                                                                                         | **odgi stat (GPU)**                                                                                                         |
-|--------------------|--------------|--------------|--------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------|
-| DRB1-3123.og      | ~ 1 second   | ~ 1 second   | <details><summary>View Details</summary>  
-
-| path       | in_node_space | in_nucleotide_space | num_links_considered | num_gap_links_not_penalized |
-|------------|---------------|---------------------|-----------------------|----------------------------|
-| all_paths  | 1.17814       | 9.3813             | 21870                | 14210                     |
-
-| path       | in_node_space | in_nucleotide_space | nodes   | nucleotides | num_penalties | num_penalties_different_orientation |
-|------------|---------------|---------------------|---------|-------------|---------------|------------------------------------|
-| all_paths  | 3.45147       | 3.8104             | 21882   | 163416      | 4043          | 1                                  |
-
-</details> | <details><summary>View Details</summary>  
-
-| path       | in_node_space | in_nucleotide_space | num_links_considered | num_gap_links_not_penalized |
-|------------|---------------|---------------------|-----------------------|----------------------------|
-| all_paths  | 1.51911       | 11.9914            | 21870                | 12455                     |
-
-| path       | in_node_space | in_nucleotide_space | nodes   | nucleotides | num_penalties | num_penalties_different_orientation |
-|------------|---------------|---------------------|---------|-------------|---------------|------------------------------------|
-| all_paths  | 3.81761       | 4.24005            | 21882   | 163416      | 4700          | 1                                  |
-
-</details> |
+| **Dataset**       | **CPU Time** | **GPU Time** | **odgi stat (CPU)**                            | **odgi stat (GPU)**                            |
+|--------------------|--------------|--------------|-----------------------------------------------|-----------------------------------------------|
+| DRB1-3123      | ~ 1 second   | ~ 1 second   | ![DRB1_CPU](readmeFile/odgiFile/DRB1_cpu.png)   | ![DRB1_GPU](readmeFile/odgiFile/DRB1_gpu.png)   |
+| MHC graph from Chr6 (sort by paths CHM13 and GRCh38) | ~ 45 seconds   | ~ 3 seconds   | ![MHC_CPU](readmeFile/odgiFile/MHC_cpu.png)   | ![MHC_GPU](readmeFile/odgiFile/MHC_gpu.png)   |
 
 ---
 
 ### Explanation of Columns
 
-- **Dataset**: The `.og` file or genome dataset name.
+- **Dataset**: The genome dataset name.
 - **Size**: Approximate input size on disk, or number of nodes/paths.
 - **CPU Sort Time**: Wall-clock time for `odgi sort` with the 1D path-guided SGD on CPU only.
 - **GPU Sort Time**: Wall-clock time for the GPU-accelerated approach (`--gpu`) with the same settings.
@@ -56,7 +37,7 @@ This part summarizes the results of running `odgi sort` with the new 1D path-gui
 ## Observations
 
 1. **Performance**: 
-   - On larger datasets (e.g., `chr8.pan.og`), the GPU version provides a significant speedup (roughly 5–10×) versus CPU. 
+   - On larger datasets (e.g., `DRB1-3123.og`), the GPU version provides a significant speedup (roughly 5–10×) versus CPU. 
    - Smaller graphs may not show as large a difference due to overhead.
 
 2. **Correctness**: 
