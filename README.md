@@ -37,15 +37,15 @@ This part summarizes the results of running `odgi sort` with the new 1D path-gui
 ## Observations
 
 1. **Performance**: 
-   - On larger datasets (e.g., `DRB1-3123.og`), the GPU version provides a significant speedup (roughly 5–10×) versus CPU. 
+   - On larger datasets (e.g., `chr6.mhc.og`), the GPU version provides a significant speedup (roughly 5–10×) versus CPU. 
    - Smaller graphs may not show as large a difference due to overhead.
 
 2. **Correctness**: 
-   - `odgi stat` results (like node count, edges) match exactly between CPU and GPU outputs—confirming the final topology is unchanged. 
+   - `odgi stat` results match between CPU and GPU outputs—confirming the final topology is unchanged. 
    - Path positions may differ slightly but are functionally correct.
 
 3. **Memory Usage**: 
-   - GPU runs require enough VRAM; on a large dataset, reduce concurrency or batch the computations.
+   - GPU runs require enough VRAM; on a large dataset, may need to reduce concurrency or batch the computations.
 
 ---
 
