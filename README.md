@@ -32,7 +32,7 @@ This section summarizes the results of running **`odgi sort`** (using the new **
 
 - **Dataset**: Name/description of the `.og` file (genome dataset).  
 - **CPU/GPU Time**: Wall-clock time for `odgi sort` on CPU vs. GPU with the same settings.  
-- **odgi stats**: Output from `odgi stat` before and after sorting (CPU vs. GPU).  
+- **odgi stats**: Output from `odgi stats` before and after sorting (CPU vs. GPU).  
 - **odgi viz**: Visual snapshots (`.png`) of the graph layout before and after sorting.
 
 ---
@@ -44,7 +44,7 @@ This section summarizes the results of running **`odgi sort`** (using the new **
    - Smaller graphs may see less benefit due to overhead.
 
 2. **Correctness**  
-   - Aside from path position differences, **`odgi stat`** outputs confirm the final topology remains unchanged between CPU and GPU.  
+   - Aside from path position differences, **`odgi stats`** outputs confirm the final topology remains unchanged between CPU and GPU.  
    - The layout is functionally correct in both cases.
 
 3. **Memory Usage**  
