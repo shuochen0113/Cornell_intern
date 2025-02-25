@@ -47,20 +47,10 @@ Synthetic DNA sequences were generated with:
 | TS5       | 106.7319      | 2.2654        | 47.11x  | 19673           | (10019,10000)      |
 
 ### Key Observations
-1. GPU Acceleration:
-   - Progressive speedup from 3.67x to 47.11x
-   - Initial kernel overhead dominates small sequences (<500bp)
-   - Near-linear scaling for large sequences (>5,000bp)
+1. GPU Acceleration: Progressive speedup from 3.67x to 47.11x
 
-2. Alignment Quality:
-   - 100% score consistency between CPU/GPU implementations
-   - Average alignment identity: 82.4% ± 5.6%
-   - Longest continuous match: 147bp (TS5)
+2. Alignment Quality: 100% score consistency between CPU/GPU implementations
 
-3. Memory Patterns:
-   - GPU VRAM utilization peaks at 78% capacity
-   - CPU implementation shows O(mn) space complexity
-   - GPU kernel achieves O(m+n) memory footprint
 
 ## How to Reproduce
 
@@ -70,24 +60,14 @@ Synthetic DNA sequences were generated with:
 - Triton 2.1.0
 - PyTorch 2.0.1+
 
-### Installation
-git clone https://github.com/yourusername/smith-waterman-trition.git
-cd smith-waterman-trition
-pip install -r requirements.txt
-
 ### Execution
-1. Run all benchmark tests
+- Run all benchmark tests
 `python -m tests.run_experiments`
-
-2. Results will be saved to: `/outputs/results_<timestamp>.json`
+- Results will be saved to: `/outputs/results_<timestamp>.json`
 
 ## Conclusion
 This implementation demonstrates:
 1. Effective GPU Utilization: 47x speedup at genome scale
 2. Algorithm Validation: Bit-perfect score matching
-3. Practical Applications:
-   - NGS read alignment
-   - Structural variation detection
-   - Long-read sequencing analysis
 
 The TS5 case (12,000 vs 10,000bp) shows particular promise for whole-genome alignment tasks, completing in 2.26s compared to CPU's 106.73s.
